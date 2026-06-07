@@ -11,7 +11,7 @@ If you downloaded `View.zip` from the Releases page, macOS will flag it as "dama
 ```bash
 xattr -cr /path/to/View.app
 ```
-*(Replace `/path/to/View.app` with the actual path, e.g., `~/Downloads/View.app` or `/Applications/View.app`)*
+*(Replace `/path/to/View.app` with the actual path, e.g., `~/Downloads/View.app`)*
 
 ### Quick Start
 1. **Move it** to your `/Applications` folder (optional but recommended).
