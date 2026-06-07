@@ -4,20 +4,32 @@ A lightweight, native macOS image viewer written in Swift. No dependencies, no E
 
 ---
 
-## Download & Use (Pre-built)
+## Installation & Usage (Pre-built)
 
-If you have the pre-built `View.app`:
+If you downloaded `View.zip` from the Releases page, macOS will flag it as "damaged" because it is not signed with a paid Apple Developer certificate. To fix this, extract the app, open your Terminal, and remove the quarantine flag:
 
+```bash
+xattr -cr /path/to/View.app
+```
+*(Replace `/path/to/View.app` with the actual path, e.g., `~/Downloads/View.app` or `/Applications/View.app`)*
+
+### Quick Start
 1. **Move it** to your `/Applications` folder (optional but recommended).
-2. **Open an image** by double-clicking `View.app`, or drag any supported image onto the app icon.
-3. **Set as default viewer** so images open in View automatically:
-   - Right-click any image → **Get Info** (`Cmd+I`)
-   - Expand **Open with**
-   - Select **View.app** (click **Other…** if not listed)
-   - Click **Change All…**
+2. **Open via Finder:** Double-click `View.app` — a file picker will appear.
+3. **Drag and drop:** Drag any supported file onto the app icon in the Dock or Finder.
+4. **Open from Terminal:**
+   ```bash
+   open View.app --args /path/to/image.png
+   ```
 
-> **macOS Gatekeeper:** On first launch, macOS may block the app since it's not from the App Store. To allow it:  
-> Right-click `View.app` → **Open** → **Open** in the dialog. You only need to do this once.
+### Default Viewer Setup
+To make images open in View automatically:
+- Right-click any image → **Get Info** (`Cmd+I`)
+- Expand **Open with**
+- Select **View.app** (click **Other…** if not listed)
+- Click **Change All…**
+
+Once an image is open, use the arrow keys (`←` / `→`) to instantly browse all images in the same folder.
 
 ---
 
@@ -82,23 +94,7 @@ app_icon.png          ← optional custom icon
 
 The bundled `model-viewer.min.js` is automatically copied into the app — GLB 3D viewing works fully offline with no network requests.
 
----
 
-## Usage
-
-**Open via Finder:** Double-click `View.app` — a file picker will appear.
-
-**Open from the command line:**
-
-```bash
-open View.app --args /path/to/image.png
-```
-
-**Drag and drop:** Drag any supported file onto the app icon in the Dock or Finder.
-
-Once an image is open, use arrow keys to browse all images in the same folder.
-
----
 
 ## Features
 

@@ -108,6 +108,10 @@ EOF
 # Remove compilation artifacts
 rm -rf .tmp
 
+# Apply ad-hoc signature (Required for Apple Silicon architectures)
+echo "=== Signing Application (Ad-Hoc) ==="
+codesign --force --deep --sign - View.app
+
 echo "=== View.app built successfully ==="
 echo "You can launch the app by running:"
 echo "  open View.app"
