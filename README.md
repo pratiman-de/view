@@ -2,7 +2,7 @@
 
 A lightweight, macOS image viewer written in Swift. 
 
-**Why use View instead of Preview?** Unlike Apple's built-in Preview app (which requires you to manually select multiple files to browse them together), **View** automatically detects all images in the same folder , just open one image and use the arrow keys to instantly flip through the rest. It's built specifically for fast, focused image browsing without the bloat of PDF editing tools, and includes out-of-the-box support for 3D `.glb` models and `.svg` files. Also, change the background color to get better view of transparent images. 
+**Why use View instead of Preview?** Unlike Apple's built-in Preview app (which requires you to manually select multiple files to browse them together), **View** automatically detects all images in the same folder , just open one image and use the arrow keys to instantly flip through the rest. It's built specifically for fast, focused image browsing without the bloat of PDF editing tools, and includes out-of-the-box support for 3D `.glb` models and `.svg` files. Also, change the background color to get better view of images with transparent background. 
 
 Built with Gemini 3.5 Flash.
 
