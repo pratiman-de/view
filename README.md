@@ -1,11 +1,16 @@
 # View — macOS Image Viewer
 
-A lightweight, native macOS image viewer written in Swift. No dependencies, no Electron, no runtime — just a single Swift file compiled into a fast native app. Built with Gemini 3.5 Flash.
+A lightweight, macOS image viewer written in Swift. 
+
+**Why use View instead of Preview?** Unlike Apple's built-in Preview app (which requires you to manually select multiple files to browse them together), **View** automatically detects all images in the same folder — just open one image and use the arrow keys to instantly flip through the rest. It's built specifically for fast, focused image browsing without the bloat of PDF editing tools, and includes out-of-the-box support for 3D `.glb` models and `.svg` files. Also, change the background color to get better view of transparent images. 
+
+Built with Gemini 3.5 Flash.
 
 ---
 
 ## Installation & Usage (Pre-built)
 
+MacOS 13+ is required to run this application.
 If you downloaded `View.zip` from the Releases page, macOS will flag it as "damaged" because it is not signed with a paid Apple Developer certificate. To fix this, extract the app, open your Terminal, and remove the quarantine flag:
 
 ```bash
@@ -100,7 +105,7 @@ The bundled `model-viewer.min.js` is automatically copied into the app — GLB 3
 
 - **Folder browsing** — arrow keys navigate all images in the current directory
 - **Smart memory cache** — only 3 images in RAM at a time (prev / current / next), background preloading, instant eviction
-- **Smooth zoom** — native trackpad pinch-to-zoom via `NSScrollView`, range 5% – 4000%
+- **Smooth zoom** — native trackpad pinch-to-zoom via `NSScrollView`
 - **HUD overlay** — bar showing filename, dimensions, file size, and position (e.g. `12 of 340`)
 - **Background modes** — Dark, Black, White
 - **Rotation** — in-memory 90° rotation without modifying the file

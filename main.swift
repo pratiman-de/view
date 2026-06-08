@@ -89,6 +89,8 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         
         // Create web view
         let webConfig = WKWebViewConfiguration()
+        // Allow file:// pages to load sibling file:// resources (needed for model-viewer.min.js)
+        webConfig.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
         webView = WKWebView(frame: container.bounds, configuration: webConfig)
         webView.autoresizingMask = [.width, .height]
         webView.navigationDelegate = self
@@ -224,6 +226,14 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         let url = imageURLs[currentIndex]
         let ext = url.pathExtension.lowercased()
         
+        // Strip the quarantine attribute (com.apple.quarantine) that macOS sets on
+        // downloaded files. Without this, Gatekeeper blocks reads from non-notarized apps.
+        url.withUnsafeFileSystemRepresentation { fsRep in
+            if let fsRep = fsRep {
+                removexattr(fsRep, "com.apple.quarantine", 0)
+            }
+        }
+        
         if ext == "glb" {
             scrollView.isHidden = true
             webView.isHidden = false
@@ -238,8 +248,9 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
             
             // Resolve the bundled model-viewer.min.js from the app Resources directory
             let resourcesURL = Bundle.main.resourceURL ?? url.deletingLastPathComponent()
-            let scriptURL = resourcesURL.appendingPathComponent("model-viewer.min.js")
             
+            // Use absolute file:// URL for the script so WKWebView can load it directly
+            // from Resources without needing to copy it anywhere.
             let html = """
             <!DOCTYPE html>
             <html>
@@ -273,13 +284,25 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
             </html>
             """
             
-            // Write HTML to a temp file in Resources so WKWebView can resolve the sibling JS file
-            let tmpHTML = resourcesURL.appendingPathComponent("_glb_viewer.html")
+            // Write only the HTML to a temp dir (always writable after code signing).
+            // The JS is read directly from Resources via its absolute file:// URL —
+            // allowFileAccessFromFileURLs (set on WKWebViewConfiguration) permits this.
+            let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ViewApp_GLB")
+            try? FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+            let tmpHTML = tmpDir.appendingPathComponent("glb_viewer.html")
+            let tmpJS   = tmpDir.appendingPathComponent("model-viewer.min.js")
+            
+            // Copy the bundled JS to temp once — both files in the same dir avoids
+            // any cross-directory file:// access restrictions in WKWebView.
+            if !FileManager.default.fileExists(atPath: tmpJS.path) {
+                let srcJS = resourcesURL.appendingPathComponent("model-viewer.min.js")
+                try? FileManager.default.copyItem(at: srcJS, to: tmpJS)
+            }
+            
             if (try? html.write(to: tmpHTML, atomically: true, encoding: .utf8)) != nil {
-                webView.loadFileURL(tmpHTML, allowingReadAccessTo: resourcesURL)
+                webView.loadFileURL(tmpHTML, allowingReadAccessTo: tmpDir)
             } else {
-                // Fallback: if writing temp file failed, load without local script (requires network)
-                webView.loadHTMLString(html, baseURL: scriptURL.deletingLastPathComponent())
+                showError("Could not write GLB viewer HTML to temp directory")
             }
             
             updateHUDForGLB(with: url)
@@ -293,7 +316,10 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         // Get image from cache or load it
         var image: NSImage? = preloadedImages[url]
         if image == nil {
-            if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+            if ext == "svg" {
+                // NSImage handles SVG natively on macOS 12+; bypass CGImageSource (raster only)
+                image = NSImage(contentsOf: url)
+            } else if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
                let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
                 let img = NSImage(cgImage: cgImage, size: .zero)
                 image = img
@@ -340,6 +366,10 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         let scale = min(wRatio, hRatio)
         
         let finalScale = scale > 0.05 ? scale : 0.05
+        
+        // Zoom-out floor = fit-to-window scale. User can zoom in freely and zoom
+        // back out to fit, but no further. Updates on every window resize automatically.
+        scrollView.minMagnification = finalScale
         scrollView.magnification = finalScale
         
         // Center view in scrollview content bounds (HUD offset is handled by CenteringClipView)
@@ -398,7 +428,9 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         }
         
         // 2. Preload neighbors in background thread to avoid stutter on transition
-        let urlsToPreload = [prevURL, nextURL].compactMap { $0 }.filter { preloadedImages[$0] == nil && $0.pathExtension.lowercased() != "glb" }
+        // Skip glb (rendered via WebKit) and svg (loaded via NSImage, not CGImageSource)
+        let nonRasterExts = ["glb", "svg"]
+        let urlsToPreload = [prevURL, nextURL].compactMap { $0 }.filter { preloadedImages[$0] == nil && !nonRasterExts.contains($0.pathExtension.lowercased()) }
         
         DispatchQueue.global(qos: .userInitiated).async {
             for url in urlsToPreload {
@@ -753,6 +785,26 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
     }
     
     // File Types menu actions
+    @objc func togglePNGSupport(_ sender: AnyObject) {
+        if activeExtensions.contains("png") {
+            activeExtensions.remove("png")
+        } else {
+            activeExtensions.insert("png")
+        }
+        reloadDirectoryPreservingFocus()
+    }
+    
+    @objc func toggleJPGSupport(_ sender: AnyObject) {
+        if activeExtensions.contains("jpg") {
+            activeExtensions.remove("jpg")
+            activeExtensions.remove("jpeg")
+        } else {
+            activeExtensions.insert("jpg")
+            activeExtensions.insert("jpeg")
+        }
+        reloadDirectoryPreservingFocus()
+    }
+    
     @objc func toggleSVGSupport(_ sender: AnyObject) {
         if activeExtensions.contains("svg") {
             activeExtensions.remove("svg")
@@ -798,24 +850,8 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
     }
     
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        guard let container = menuItem.view as? ClickableStackView,
-              let toggle = container.arrangedSubviews.compactMap({ $0 as? NSSwitch }).first else {
-            return true
-        }
-        
-        let isEnabled: Bool
-        if menuItem.action == #selector(toggleSVGSupport(_:)) {
-            isEnabled = activeExtensions.contains("svg")
-        } else if menuItem.action == #selector(toggleEPSSupport(_:)) {
-            isEnabled = activeExtensions.contains("eps")
-        } else if menuItem.action == #selector(toggleTIFSupport(_:)) {
-            isEnabled = activeExtensions.contains("tif")
-        } else if menuItem.action == #selector(toggleGLBSupport(_:)) {
-            isEnabled = activeExtensions.contains("glb")
-        } else {
-            isEnabled = false
-        }
-        toggle.state = isEnabled ? .on : .off
+        // Just keep items enabled; state sync is done in AppDelegate.menuWillOpen
+        // which reads from whichever window is currently key.
         return true
     }
 }
@@ -906,11 +942,44 @@ class ImageWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     
     var windowControllers: [ImageWindowController] = []
     var hasOpenedFile = false
     var lastWindowLocation = NSPoint(x: 100, y: 800)
+    
+    // References to the toggle submenus so we can act as their NSMenuDelegate
+    var fileTypesMenu: NSMenu?
+    var glbMenu: NSMenu?
+    
+    // NSMenuDelegate – called once before the menu appears. Reads from the key
+    // window's ImageViewController so each window's toggles reflect its own state.
+    func menuWillOpen(_ menu: NSMenu) {
+        guard let vc = NSApp.keyWindow?.contentViewController as? ImageViewController else { return }
+        for item in menu.items {
+            guard let container = item.view as? ClickableStackView,
+                  let toggle = container.arrangedSubviews.compactMap({ $0 as? NSSwitch }).first else {
+                continue
+            }
+            let isOn: Bool
+            if item.action == #selector(ImageViewController.togglePNGSupport(_:)) {
+                isOn = vc.activeExtensions.contains("png")
+            } else if item.action == #selector(ImageViewController.toggleJPGSupport(_:)) {
+                isOn = vc.activeExtensions.contains("jpg")
+            } else if item.action == #selector(ImageViewController.toggleSVGSupport(_:)) {
+                isOn = vc.activeExtensions.contains("svg")
+            } else if item.action == #selector(ImageViewController.toggleEPSSupport(_:)) {
+                isOn = vc.activeExtensions.contains("eps")
+            } else if item.action == #selector(ImageViewController.toggleTIFSupport(_:)) {
+                isOn = vc.activeExtensions.contains("tif")
+            } else if item.action == #selector(ImageViewController.toggleGLBSupport(_:)) {
+                isOn = vc.activeExtensions.contains("glb")
+            } else {
+                continue
+            }
+            toggle.state = isOn ? .on : .off
+        }
+    }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenu() // Create the application menu
@@ -1067,12 +1136,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let typesMenuItem = NSMenuItem(title: "File Types", action: nil, keyEquivalent: "")
         let typesSubmenu = NSMenu(title: "File Types")
         
+        typesSubmenu.addItem(createSwitchMenuItem(title: "PNG (.png)", tag: 99, isEnabled: true, action: #selector(ImageViewController.togglePNGSupport(_:)), target: nil))
+        typesSubmenu.addItem(createSwitchMenuItem(title: "JPEG (.jpg, .jpeg)", tag: 98, isEnabled: true, action: #selector(ImageViewController.toggleJPGSupport(_:)), target: nil))
+        typesSubmenu.addItem(NSMenuItem.separator())
         typesSubmenu.addItem(createSwitchMenuItem(title: "SVG (.svg)", tag: 100, isEnabled: false, action: #selector(ImageViewController.toggleSVGSupport(_:)), target: nil))
         typesSubmenu.addItem(createSwitchMenuItem(title: "EPS (.eps)", tag: 101, isEnabled: false, action: #selector(ImageViewController.toggleEPSSupport(_:)), target: nil))
         typesSubmenu.addItem(createSwitchMenuItem(title: "TIFF (.tif, .tiff)", tag: 102, isEnabled: false, action: #selector(ImageViewController.toggleTIFSupport(_:)), target: nil))
         
         typesMenuItem.submenu = typesSubmenu
         toolsMenu.addItem(typesMenuItem)
+        self.fileTypesMenu = typesSubmenu
+        typesSubmenu.delegate = self
         
         // 3. 3D Viewer Menu
         let viewerMenu = NSMenu(title: "3D Viewer")
@@ -1081,6 +1155,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(viewerMenuItem)
         
         viewerMenu.addItem(createSwitchMenuItem(title: "GLB (.glb)", tag: 103, isEnabled: false, action: #selector(ImageViewController.toggleGLBSupport(_:)), target: nil))
+        self.glbMenu = viewerMenu
+        viewerMenu.delegate = self
         
         NSApplication.shared.mainMenu = mainMenu
     }
@@ -1097,9 +1173,10 @@ class MenuItemTarget: NSObject {
     }
     
     @objc func toggleAction(_ sender: NSSwitch) {
-        if let keyWindow = NSApp.keyWindow?.contentViewController as? ImageViewController {
-            NSApp.sendAction(action, to: keyWindow, from: sender)
-        }
+        // Use to: nil so AppKit routes via the responder chain of the current key
+        // window. This is reliable even during menu tracking when NSApp.keyWindow
+        // may transiently return nil or the wrong window.
+        NSApp.sendAction(action, to: nil, from: sender)
         menuItem?.menu?.cancelTracking()
     }
 }

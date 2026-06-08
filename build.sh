@@ -3,7 +3,7 @@ set -e
 
 echo "=== Compiling View Swift code ==="
 mkdir -p .tmp
-TMPDIR="$(pwd)/.tmp" swiftc -O main.swift -o View
+TMPDIR="$(pwd)/.tmp" swiftc -O main.swift -o View -target arm64-apple-macosx13.0
 
 echo "=== Creating macOS App Bundle ==="
 # Clean old build if exists
@@ -74,7 +74,7 @@ cat > View.app/Contents/Info.plist <<EOF
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
-    <string>12.0</string>
+    <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>CFBundleIconFile</key>
