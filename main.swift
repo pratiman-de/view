@@ -4,6 +4,33 @@ import Foundation
 import UniformTypeIdentifiers
 import WebKit
 
+// Returns the list of file extensions enabled at compile time.
+func supportedExtensions() -> [String] {
+    var exts: [String] = []
+#if ENABLE_PNG
+    exts.append("png")
+#endif
+#if ENABLE_JPG
+    exts.append(contentsOf: ["jpg", "jpeg"])
+#endif
+#if ENABLE_SVG
+    exts.append("svg")
+#endif
+#if ENABLE_EPS
+    exts.append("eps")
+#endif
+#if ENABLE_TIFF
+    exts.append(contentsOf: ["tif", "tiff"])
+#endif
+#if ENABLE_GLB
+    exts.append("glb")
+#endif
+#if ENABLE_PDF
+    exts.append("pdf")
+#endif
+    return exts
+}
+
 // Custom ClipView that centers the document view (the image) when it's smaller than the scroll view bounds.
 class CenteringClipView: NSClipView {
     override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
@@ -42,9 +69,20 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
     // File list management
     var imageURLs: [URL] = []
     var currentIndex: Int = -1
+    var lastNavigationDirection: Int = 1 // 1 for forward, -1 for backward
     
-    // Dynamic extensions support (PNG, JPG, JPEG are always enabled by default; SVG, EPS, TIF disabled by default)
-    var activeExtensions: Set<String> = ["png", "jpg", "jpeg"]
+    // Dynamic extensions support
+    var activeExtensions: Set<String> = {
+        var exts = Set<String>()
+#if ENABLE_PNG
+        exts.insert("png")
+#endif
+#if ENABLE_JPG
+        exts.insert("jpg")
+        exts.insert("jpeg")
+#endif
+        return exts
+    }()
     
     var preloadedImages: [URL: NSImage] = [:]
     
@@ -173,7 +211,7 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         // Auto-enable format support if opening a file of a currently disabled format
         if autoEnableFormat {
             let ext = targetURL.pathExtension.lowercased()
-            let toggleableExtensions = ["svg", "eps", "tif", "tiff", "glb"]
+            let toggleableExtensions = supportedExtensions()
             if toggleableExtensions.contains(ext) && !activeExtensions.contains(ext) {
                 activeExtensions.insert(ext)
                 if ext == "tif" || ext == "tiff" {
@@ -226,14 +264,9 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         let url = imageURLs[currentIndex]
         let ext = url.pathExtension.lowercased()
         
-        // Strip the quarantine attribute (com.apple.quarantine) that macOS sets on
-        // downloaded files. Without this, Gatekeeper blocks reads from non-notarized apps.
-        url.withUnsafeFileSystemRepresentation { fsRep in
-            if let fsRep = fsRep {
-                removexattr(fsRep, "com.apple.quarantine", 0)
-            }
-        }
+
         
+#if ENABLE_GLB
         if ext == "glb" {
             scrollView.isHidden = true
             webView.isHidden = false
@@ -249,8 +282,6 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
             // Resolve the bundled model-viewer.min.js from the app Resources directory
             let resourcesURL = Bundle.main.resourceURL ?? url.deletingLastPathComponent()
             
-            // Use absolute file:// URL for the script so WKWebView can load it directly
-            // from Resources without needing to copy it anywhere.
             let html = """
             <!DOCTYPE html>
             <html>
@@ -284,16 +315,11 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
             </html>
             """
             
-            // Write only the HTML to a temp dir (always writable after code signing).
-            // The JS is read directly from Resources via its absolute file:// URL —
-            // allowFileAccessFromFileURLs (set on WKWebViewConfiguration) permits this.
             let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ViewApp_GLB")
             try? FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
             let tmpHTML = tmpDir.appendingPathComponent("glb_viewer.html")
             let tmpJS   = tmpDir.appendingPathComponent("model-viewer.min.js")
             
-            // Copy the bundled JS to temp once — both files in the same dir avoids
-            // any cross-directory file:// access restrictions in WKWebView.
             if !FileManager.default.fileExists(atPath: tmpJS.path) {
                 let srcJS = resourcesURL.appendingPathComponent("model-viewer.min.js")
                 try? FileManager.default.copyItem(at: srcJS, to: tmpJS)
@@ -309,6 +335,7 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
             manageMemoryCache()
             return
         }
+#endif
         
         scrollView.isHidden = false
         webView.isHidden = true
@@ -316,8 +343,8 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         // Get image from cache or load it
         var image: NSImage? = preloadedImages[url]
         if image == nil {
-            if ext == "svg" {
-                // NSImage handles SVG natively on macOS 12+; bypass CGImageSource (raster only)
+            if ext == "svg" || ext == "pdf" {
+                // NSImage handles SVG and PDF natively on macOS; bypass CGImageSource (raster only)
                 image = NSImage(contentsOf: url)
             } else if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
                let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
@@ -409,6 +436,102 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         updateHUD(with: url, image: rotatedImage)
     }
     
+#if ENABLE_TRASH
+    func trashCurrentImage() {
+        guard currentIndex >= 0, currentIndex < imageURLs.count else { return }
+        let url = imageURLs[currentIndex]
+        
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            
+            self.imageURLs.remove(at: self.currentIndex)
+            if self.imageURLs.isEmpty {
+                self.hudLabel.stringValue = "No supported images in folder"
+                self.imageView.image = nil
+                if let web = self.webView { web.isHidden = true }
+                self.scrollView.isHidden = true
+            } else {
+                if self.lastNavigationDirection == -1 {
+                    self.currentIndex -= 1
+                    if self.currentIndex < 0 {
+                        self.currentIndex = 0
+                    }
+                } else {
+                    if self.currentIndex >= self.imageURLs.count {
+                        self.currentIndex = self.imageURLs.count - 1
+                    }
+                }
+                self.displayCurrentImage(resetZoom: false)
+            }
+        } catch {
+            showError("Could not move file to Trash: \(error.localizedDescription)")
+        }
+    }
+#endif
+
+#if ENABLE_RENAME
+    func renameCurrentImage() {
+        guard currentIndex >= 0, currentIndex < imageURLs.count else { return }
+        let currentURL = imageURLs[currentIndex]
+        
+        let alert = NSAlert()
+        alert.messageText = "Rename File"
+        alert.informativeText = ""
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        input.stringValue = currentURL.deletingPathExtension().lastPathComponent
+        alert.accessoryView = input
+        alert.window.initialFirstResponder = input
+        
+        if alert.runModal() == .alertFirstButtonReturn {
+            let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            guard !newName.isEmpty else { return }
+            
+            var targetURL = currentURL.deletingLastPathComponent().appendingPathComponent("\(newName).\(currentURL.pathExtension)")
+            guard targetURL != currentURL else { return }
+            
+            if FileManager.default.fileExists(atPath: targetURL.path) {
+                let overwriteAlert = NSAlert()
+                overwriteAlert.messageText = "File already exists"
+                overwriteAlert.informativeText = "A file named \"\(targetURL.lastPathComponent)\" already exists. Do you want to overwrite it or keep both?"
+                overwriteAlert.addButton(withTitle: "Keep Both")
+                overwriteAlert.addButton(withTitle: "Overwrite")
+                overwriteAlert.addButton(withTitle: "Cancel")
+                
+                let response = overwriteAlert.runModal()
+                if response == .alertFirstButtonReturn {
+                    var copyIndex = 1
+                    while FileManager.default.fileExists(atPath: targetURL.path) {
+                        targetURL = currentURL.deletingLastPathComponent().appendingPathComponent("\(newName) (\(copyIndex)).\(currentURL.pathExtension)")
+                        copyIndex += 1
+                    }
+                } else if response == .alertSecondButtonReturn {
+                    do {
+                        try FileManager.default.trashItem(at: targetURL, resultingItemURL: nil)
+                    } catch {
+                        self.showError("Failed to remove existing file: \(error.localizedDescription)")
+                        return
+                    }
+                } else {
+                    return
+                }
+            }
+            
+            do {
+                try FileManager.default.moveItem(at: currentURL, to: targetURL)
+                self.imageURLs[self.currentIndex] = targetURL
+                self.displayCurrentImage(resetZoom: false)
+            } catch {
+                self.showError("Failed to rename file: \(error.localizedDescription)")
+            }
+        }
+    }
+#endif
+    
     // Smart Memory Management: Dynamic active-window cache (K=3)
     private func manageMemoryCache() {
         guard currentIndex >= 0, currentIndex < imageURLs.count else { return }
@@ -494,6 +617,12 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
     func handleKeyDown(with event: NSEvent) -> Bool {
         // Handle Command shortcuts first
         if event.modifierFlags.contains(.command) {
+#if ENABLE_TRASH
+            if event.keyCode == 51 || event.keyCode == 117 { // Delete/Backspace key or Forward Delete
+                trashCurrentImage()
+                return true
+            }
+#endif
             if let chars = event.charactersIgnoringModifiers?.lowercased() {
                 switch chars {
                 case "q":
@@ -512,6 +641,13 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
                 case "b":
                     cycleBackground()
                     return true
+                case "r":
+                    if event.modifierFlags.contains(.command) {
+#if ENABLE_RENAME
+                        renameCurrentImage()
+                        return true
+#endif
+                    }
                 case "p":
                     openInPreview()
                     return true
@@ -526,6 +662,7 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         case 124, 49: // Right Arrow, Spacebar
             // Next image
             if currentIndex < imageURLs.count - 1 {
+                lastNavigationDirection = 1
                 currentIndex += 1
                 displayCurrentImage(resetZoom: true)
             }
@@ -534,6 +671,7 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         case 123, 51: // Left Arrow, Delete/Backspace
             // Previous image
             if currentIndex > 0 {
+                lastNavigationDirection = -1
                 currentIndex -= 1
                 displayCurrentImage(resetZoom: true)
             }
@@ -655,7 +793,7 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
     func promptForFile() {
         let openPanel = NSOpenPanel()
         openPanel.title = "Choose an Image"
-        let extensions = ["png", "jpg", "jpeg", "svg", "eps", "tif", "tiff"]
+        let extensions = supportedExtensions()
         openPanel.allowedContentTypes = extensions.compactMap { UTType(filenameExtension: $0) }
         openPanel.allowsMultipleSelection = false
         openPanel.canChooseDirectories = false
@@ -785,6 +923,7 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
     }
     
     // File Types menu actions
+#if ENABLE_PNG
     @objc func togglePNGSupport(_ sender: AnyObject) {
         if activeExtensions.contains("png") {
             activeExtensions.remove("png")
@@ -793,7 +932,9 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         }
         reloadDirectoryPreservingFocus()
     }
+#endif
     
+#if ENABLE_JPG
     @objc func toggleJPGSupport(_ sender: AnyObject) {
         if activeExtensions.contains("jpg") {
             activeExtensions.remove("jpg")
@@ -804,7 +945,9 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         }
         reloadDirectoryPreservingFocus()
     }
+#endif
     
+#if ENABLE_SVG
     @objc func toggleSVGSupport(_ sender: AnyObject) {
         if activeExtensions.contains("svg") {
             activeExtensions.remove("svg")
@@ -813,7 +956,9 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         }
         reloadDirectoryPreservingFocus()
     }
+#endif
     
+#if ENABLE_EPS
     @objc func toggleEPSSupport(_ sender: AnyObject) {
         if activeExtensions.contains("eps") {
             activeExtensions.remove("eps")
@@ -822,7 +967,9 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         }
         reloadDirectoryPreservingFocus()
     }
+#endif
     
+#if ENABLE_TIFF
     @objc func toggleTIFSupport(_ sender: AnyObject) {
         if activeExtensions.contains("tif") {
             activeExtensions.remove("tif")
@@ -833,7 +980,9 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         }
         reloadDirectoryPreservingFocus()
     }
+#endif
     
+#if ENABLE_GLB
     @objc func toggleGLBSupport(_ sender: AnyObject) {
         if activeExtensions.contains("glb") {
             activeExtensions.remove("glb")
@@ -842,6 +991,18 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         }
         reloadDirectoryPreservingFocus()
     }
+#endif
+
+#if ENABLE_PDF
+    @objc func togglePDFSupport(_ sender: AnyObject) {
+        if activeExtensions.contains("pdf") {
+            activeExtensions.remove("pdf")
+        } else {
+            activeExtensions.insert("pdf")
+        }
+        reloadDirectoryPreservingFocus()
+    }
+#endif
     
     func reloadDirectoryPreservingFocus() {
         guard currentIndex >= 0, currentIndex < imageURLs.count else { return }
@@ -961,23 +1122,46 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                   let toggle = container.arrangedSubviews.compactMap({ $0 as? NSSwitch }).first else {
                 continue
             }
-            let isOn: Bool
-            if item.action == #selector(ImageViewController.togglePNGSupport(_:)) {
+            var isOn: Bool? = nil
+            
+#if ENABLE_PNG
+            if isOn == nil, item.action == #selector(ImageViewController.togglePNGSupport(_:)) {
                 isOn = vc.activeExtensions.contains("png")
-            } else if item.action == #selector(ImageViewController.toggleJPGSupport(_:)) {
-                isOn = vc.activeExtensions.contains("jpg")
-            } else if item.action == #selector(ImageViewController.toggleSVGSupport(_:)) {
-                isOn = vc.activeExtensions.contains("svg")
-            } else if item.action == #selector(ImageViewController.toggleEPSSupport(_:)) {
-                isOn = vc.activeExtensions.contains("eps")
-            } else if item.action == #selector(ImageViewController.toggleTIFSupport(_:)) {
-                isOn = vc.activeExtensions.contains("tif")
-            } else if item.action == #selector(ImageViewController.toggleGLBSupport(_:)) {
-                isOn = vc.activeExtensions.contains("glb")
-            } else {
-                continue
             }
-            toggle.state = isOn ? .on : .off
+#endif
+#if ENABLE_JPG
+            if isOn == nil, item.action == #selector(ImageViewController.toggleJPGSupport(_:)) {
+                isOn = vc.activeExtensions.contains("jpg")
+            }
+#endif
+#if ENABLE_TIFF
+            if isOn == nil, item.action == #selector(ImageViewController.toggleTIFSupport(_:)) {
+                isOn = vc.activeExtensions.contains("tif")
+            }
+#endif
+#if ENABLE_SVG
+            if isOn == nil, item.action == #selector(ImageViewController.toggleSVGSupport(_:)) {
+                isOn = vc.activeExtensions.contains("svg")
+            }
+#endif
+#if ENABLE_EPS
+            if isOn == nil, item.action == #selector(ImageViewController.toggleEPSSupport(_:)) {
+                isOn = vc.activeExtensions.contains("eps")
+            }
+#endif
+#if ENABLE_GLB
+            if isOn == nil, item.action == #selector(ImageViewController.toggleGLBSupport(_:)) {
+                isOn = vc.activeExtensions.contains("glb")
+            }
+#endif
+#if ENABLE_PDF
+            if isOn == nil, item.action == #selector(ImageViewController.togglePDFSupport(_:)) {
+                isOn = vc.activeExtensions.contains("pdf")
+            }
+#endif
+            
+            guard let finalIsOn = isOn else { continue }
+            toggle.state = finalIsOn ? .on : .off
         }
     }
     
@@ -990,7 +1174,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Process arguments if launched via command line with file paths
         let args = ProcessInfo.processInfo.arguments
         if !hasOpenedFile && args.count > 1 {
-            let validExtensions = ["png", "jpg", "jpeg", "svg", "eps", "tif", "tiff", "glb"]
+            let validExtensions = supportedExtensions()
             for i in 1..<args.count {
                 let filePath = args[i]
                 let fileURL = URL(fileURLWithPath: filePath).standardized
@@ -1034,7 +1218,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     
     // Support drag and drop files onto the App Icon in Dock or Finder
     func application(_ application: NSApplication, open urls: [URL]) {
-        let validExtensions = ["png", "jpg", "jpeg", "svg", "eps", "tif", "tiff", "glb"]
+        let validExtensions = supportedExtensions()
         for url in urls {
             let fileURL = url.standardized
             if validExtensions.contains(fileURL.pathExtension.lowercased()) {
@@ -1080,7 +1264,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func promptForFile() {
         let openPanel = NSOpenPanel()
         openPanel.title = "Choose Images"
-        let extensions = ["png", "jpg", "jpeg", "svg", "eps", "tif", "tiff", "glb"]
+        let extensions = supportedExtensions()
         if #available(macOS 11.0, *) {
             openPanel.allowedContentTypes = extensions.compactMap { UTType(filenameExtension: $0) }
         } else {
@@ -1136,18 +1320,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let typesMenuItem = NSMenuItem(title: "File Types", action: nil, keyEquivalent: "")
         let typesSubmenu = NSMenu(title: "File Types")
         
+#if ENABLE_PNG
         typesSubmenu.addItem(createSwitchMenuItem(title: "PNG (.png)", tag: 99, isEnabled: true, action: #selector(ImageViewController.togglePNGSupport(_:)), target: nil))
+#endif
+#if ENABLE_JPG
         typesSubmenu.addItem(createSwitchMenuItem(title: "JPEG (.jpg, .jpeg)", tag: 98, isEnabled: true, action: #selector(ImageViewController.toggleJPGSupport(_:)), target: nil))
+#endif
         typesSubmenu.addItem(NSMenuItem.separator())
+#if ENABLE_SVG
         typesSubmenu.addItem(createSwitchMenuItem(title: "SVG (.svg)", tag: 100, isEnabled: false, action: #selector(ImageViewController.toggleSVGSupport(_:)), target: nil))
+#endif
+#if ENABLE_EPS
         typesSubmenu.addItem(createSwitchMenuItem(title: "EPS (.eps)", tag: 101, isEnabled: false, action: #selector(ImageViewController.toggleEPSSupport(_:)), target: nil))
+#endif
+#if ENABLE_TIFF
         typesSubmenu.addItem(createSwitchMenuItem(title: "TIFF (.tif, .tiff)", tag: 102, isEnabled: false, action: #selector(ImageViewController.toggleTIFSupport(_:)), target: nil))
+#endif
+#if ENABLE_PDF
+        typesSubmenu.addItem(createSwitchMenuItem(title: "PDF (.pdf)", tag: 104, isEnabled: false, action: #selector(ImageViewController.togglePDFSupport(_:)), target: nil))
+#endif
         
         typesMenuItem.submenu = typesSubmenu
         toolsMenu.addItem(typesMenuItem)
         self.fileTypesMenu = typesSubmenu
         typesSubmenu.delegate = self
         
+#if ENABLE_GLB
         // 3. 3D Viewer Menu
         let viewerMenu = NSMenu(title: "3D Viewer")
         let viewerMenuItem = NSMenuItem()
@@ -1157,6 +1355,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         viewerMenu.addItem(createSwitchMenuItem(title: "GLB (.glb)", tag: 103, isEnabled: false, action: #selector(ImageViewController.toggleGLBSupport(_:)), target: nil))
         self.glbMenu = viewerMenu
         viewerMenu.delegate = self
+#endif
         
         NSApplication.shared.mainMenu = mainMenu
     }
@@ -1177,7 +1376,7 @@ class MenuItemTarget: NSObject {
         // window. This is reliable even during menu tracking when NSApp.keyWindow
         // may transiently return nil or the wrong window.
         NSApp.sendAction(action, to: nil, from: sender)
-        menuItem?.menu?.cancelTracking()
+        // Removed menuItem?.menu?.cancelTracking() to allow menu to stay open
     }
 }
 

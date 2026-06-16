@@ -1,9 +1,25 @@
 #!/bin/bash
 set -e
 
+# Load build configuration if it exists
+SWIFT_FLAGS=""
+if [ -f "build_config.sh" ]; then
+    echo "=== Loading build_config.sh ==="
+    source build_config.sh
+    if [ "$ENABLE_PNG" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_PNG"; fi
+    if [ "$ENABLE_JPG" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_JPG"; fi
+    if [ "$ENABLE_SVG" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_SVG"; fi
+    if [ "$ENABLE_EPS" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_EPS"; fi
+    if [ "$ENABLE_TIFF" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_TIFF"; fi
+    if [ "$ENABLE_GLB" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_GLB"; fi
+    if [ "$ENABLE_PDF" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_PDF"; fi
+    if [ "$ENABLE_TRASH" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_TRASH"; fi
+    if [ "$ENABLE_RENAME" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_RENAME"; fi
+fi
+
 echo "=== Compiling View Swift code ==="
 mkdir -p .tmp
-TMPDIR="$(pwd)/.tmp" swiftc -O main.swift -o View -target arm64-apple-macosx13.0
+TMPDIR="$(pwd)/.tmp" swiftc -O main.swift $SWIFT_FLAGS -o View -target arm64-apple-macosx12.0
 
 echo "=== Creating macOS App Bundle ==="
 # Clean old build if exists
@@ -74,9 +90,19 @@ cat > View.app/Contents/Info.plist <<EOF
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>12.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>View needs access to discover and browse other images in the same folder.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>View needs access to discover and browse other images in the same folder.</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>View needs access to discover and browse other images in the same folder.</string>
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>View needs access to discover and browse other images in the same folder.</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>View needs access to discover and browse other images in the same folder.</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon.icns</string>
     <key>CFBundleDocumentTypes</key>
@@ -98,6 +124,7 @@ cat > View.app/Contents/Info.plist <<EOF
                 <string>org.khronos.gltf.binary</string>
                 <string>model.gltf.binary</string>
                 <string>com.khronos.gltf</string>
+                <string>com.adobe.pdf</string>
             </array>
         </dict>
     </array>
