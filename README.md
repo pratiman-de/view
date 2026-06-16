@@ -114,16 +114,6 @@ ENABLE_TRASH=1
 ENABLE_RENAME=1
 ```
 
-### Project Structure
-
-```
-main.swift              # Application source
-build.sh                # Build script
-build_config.sh         # Feature flags
-model-viewer.min.js     # Bundled 3D viewer (offline GLB support)
-app_icon.png            # Application icon
-```
-
 ---
 
 ## Features
