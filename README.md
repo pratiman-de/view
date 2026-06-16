@@ -87,7 +87,7 @@ Formats can also be toggled at runtime from the **Tools → File Types** menu.
 
 ```bash
 xcode-select --install   # if not already installed
-git clone <repo-url>
+git clone https://github.com/pratiman-de/view.git
 cd view
 chmod +x build.sh
 ./build.sh
