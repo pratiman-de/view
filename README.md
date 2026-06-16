@@ -1,73 +1,83 @@
-# View — macOS Image Viewer
+# View
 
-A lightweight, macOS image viewer written in Swift. 
+A fast file viewer for macOS.
 
-**Why use View instead of Preview?** Unlike Apple's built-in Preview app (which requires you to manually select multiple files to browse them together), **View** automatically detects all images in the same folder, just open one image and use the arrow keys to instantly flip through the rest. It's built specifically for fast, focused image browsing without the bloat of PDF editing tools, and includes out-of-the-box support for 3D `.glb` models and `.svg` files. Also, change the background color to get better view of images with transparent background. 
+Open image and pdf files and browse the entire folder with arrow keys.
 
-Built with Gemini 3.5 Flash.
+## Why View?
+
+macOS Preview requires you to select every file you want to browse. View takes a different approach: open a single file, and the entire directory is at your fingertips. Navigate with arrow keys, trash what you don't need, rename on the fly, all without leaving the keyboard.
+
+View is designed for fast browsing and file management, it is not a replacement for Apple Preview. For editing, markup, or annotations, you can quickly hand off the current file to Preview by pressing `Cmd+P`.
 
 ---
 
-## Installation & Usage (Pre-built)
+## Installation
 
-MacOS 13+ is required to run this application.
-If you downloaded `View.zip` from the Releases page, macOS will flag it as "damaged" because it is not signed with a paid Apple Developer certificate. To fix this, extract the app, open your Terminal, and remove the quarantine flag:
+**Requirements:** macOS 12+ (Monterey or later), Apple Silicon
+
+### From Releases
+
+Download `View.zip` from the [Releases](https://github.com/pratiman-de/view/releases/tag/v1.0.0) page. Since the app is not notarized with an Apple Developer certificate, you will need to remove the quarantine flag before launching:
 
 ```bash
 xattr -cr /path/to/View.app
 ```
-*(Replace `/path/to/View.app` with the actual path, e.g., `~/Downloads/View.app`)*
 
-### Quick Start
-1. **Move it** to your `/Applications` folder (optional but recommended).
-2. **Open via Finder:** Double-click `View.app` — a file picker will appear.
-3. **Drag and drop:** Drag any supported file onto the app icon in the Dock or Finder.
-4. **Open from Terminal:**
-   ```bash
-   open View.app --args /path/to/image.png
-   ```
+Then move `View.app` to `/Applications` or run it from any location.
 
-### Default Viewer Setup
-To make images open in View automatically:
-- Right-click any image → **Get Info** (`Cmd+I`)
-- Expand **Open with**
-- Select **View.app** (click **Other…** if not listed)
-- Click **Change All…**
+### Set as Default Viewer
 
-Once an image is open, use the arrow keys (`←` / `→`) to instantly browse all images in the same folder.
+Right-click any image → **Get Info** → **Open with** → select `View.app` → **Change All…**
 
 ---
 
-## Supported Formats
+## Usage
 
-| Format | Notes |
+| Action | Input |
 | :--- | :--- |
-| PNG, JPG / JPEG | Always enabled |
-| SVG | Toggle via Tools menu |
-| EPS | Toggle via Tools menu |
-| TIFF | Toggle via Tools menu |
-| GLB (3D model) | Toggle via 3D Viewer menu — works fully offline |
+| Open file picker | Launch app directly |
+| Open specific file | `open View.app --args /path/to/image.png` |
+| Open via Finder | Double-click any associated file |
+| Open via Dock | Drag files onto the app icon |
 
----
+Once an image is open, all supported files in the same directory are available for browsing.
 
-## Keyboard Shortcuts
+### Keyboard Shortcuts
 
 | Key | Action |
 | :--- | :--- |
 | `→` / `Space` | Next image |
 | `←` / `Backspace` | Previous image |
 | `R` | Rotate 90° clockwise |
-| `+` / `=` | Zoom in |
-| `-` | Zoom out |
+| `+` / `-` | Zoom in / out |
 | `Escape` | Reset zoom / exit fullscreen |
-| `Cmd+B` / `B` | Cycle background: Dark → Black → White |
+| `B` | Cycle background (Dark → Black → White) |
+| `Cmd+Delete` | Move file to Trash |
+| `Cmd+R` | Rename file |
 | `Cmd+C` | Copy image to clipboard |
 | `Cmd+Opt+C` | Copy file path to clipboard |
 | `Cmd+P` | Open in Preview |
-| `Cmd+W` | Close window |
-| `Cmd+Q` | Quit |
 
-Double-click the bottom HUD bar to toggle fullscreen. Double-click the title bar to maximize.
+Double-click the title bar to maximize. Double-click the HUD bar to toggle fill-screen.
+
+---
+
+## Supported Formats
+
+All formats can be independently enabled or disabled at compile time via `build_config.sh`.
+
+| Format | Extensions | Default |
+| :--- | :--- | :--- |
+| PNG | `.png` | Enabled |
+| JPEG | `.jpg`, `.jpeg` | Enabled |
+| SVG | `.svg` | Enabled |
+| EPS | `.eps` | Disabled |
+| TIFF | `.tif`, `.tiff` | Enabled |
+| PDF | `.pdf` | Enabled |
+| GLB (3D) | `.glb` | Disabled |
+
+Formats can also be toggled at runtime from the **Tools → File Types** menu.
 
 ---
 
@@ -77,38 +87,52 @@ Double-click the bottom HUD bar to toggle fullscreen. Double-click the title bar
 
 ```bash
 xcode-select --install   # if not already installed
-```
-
-Clone the repo, then from the project directory:
-
-```bash
+git clone <repo-url>
+cd view
 chmod +x build.sh
 ./build.sh
 ```
 
-Output: `View.app` in the same directory.
+The build produces `View.app` in the project directory. No Xcode project is required.
 
-**Source files needed to build:**
+### Build Configuration
+
+Edit `build_config.sh` to enable or disable features before building:
+
+```bash
+# File Types
+ENABLE_PNG=1
+ENABLE_JPG=1
+ENABLE_SVG=1
+ENABLE_EPS=0
+ENABLE_TIFF=1
+ENABLE_GLB=0
+ENABLE_PDF=1
+
+# Edit Features
+ENABLE_TRASH=1
+ENABLE_RENAME=1
+```
+
+### Project Structure
 
 ```
-main.swift            ← entire app source
-build.sh              ← build script
-model-viewer.min.js   ← bundled for offline GLB support
-app_icon.png          ← optional custom icon
+main.swift              # Application source
+build.sh                # Build script
+build_config.sh         # Feature flags
+model-viewer.min.js     # Bundled 3D viewer (offline GLB support)
+app_icon.png            # Application icon
 ```
 
-The bundled `model-viewer.min.js` is automatically copied into the app — GLB 3D viewing works fully offline with no network requests.
-
-
+---
 
 ## Features
 
 - **Folder browsing** — arrow keys navigate all images in the current directory
 - **Smart memory cache** — only 3 images in RAM at a time (prev / current / next), background preloading, instant eviction
-- **Smooth zoom** — native trackpad pinch-to-zoom via `NSScrollView`
-- **HUD overlay** — bar showing filename, dimensions, file size, and position (e.g. `12 of 340`)
+- **Smooth zoom** — native trackpad pinch-to-zoom via NSScrollView
+- **HUD overlay** — bar showing filename, dimensions, file size, and position (e.g. 12 of 340)
 - **Background modes** — Dark, Black, White
 - **Rotation** — in-memory 90° rotation without modifying the file
-- **3D model viewer** — GLB files rendered via `model-viewer`, fully offline
+- **3D model viewer** — GLB files rendered via model-viewer, fully offline
 - **Multi-window** — open multiple files, each in its own window; Dock menu lists all open windows
-
