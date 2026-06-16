@@ -126,3 +126,5 @@ ENABLE_RENAME=1
 - **Rotation** — in-memory 90° rotation without modifying the file
 - **3D model viewer** — GLB files rendered via model-viewer, fully offline
 - **Multi-window** — open multiple files, each in its own window; Dock menu lists all open windows
+
+Built with Gemini Flash 3.5.
