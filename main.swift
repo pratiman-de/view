@@ -819,6 +819,12 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
     func changeBackground(to color: NSColor) {
         self.view.window?.backgroundColor = color
         
+        // Update window appearance so the top window title text color adapts (black text on white bg)
+        self.view.window?.appearance = NSAppearance(named: (color == .white) ? .aqua : .darkAqua)
+        
+        // Update HUD label text color for visibility
+        hudLabel.textColor = (color == .white) ? .black : .white
+        
         // Also update WebView background if active
         if let web = webView, !web.isHidden {
             var colorHex = "#171717"
