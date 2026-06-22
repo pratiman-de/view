@@ -8,6 +8,7 @@ if [ -f "build_config.sh" ]; then
     source build_config.sh
     if [ "$ENABLE_PNG" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_PNG"; fi
     if [ "$ENABLE_JPG" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_JPG"; fi
+    if [ "$ENABLE_HEIC" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_HEIC"; fi
     if [ "$ENABLE_SVG" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_SVG"; fi
     if [ "$ENABLE_EPS" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_EPS"; fi
     if [ "$ENABLE_TIFF" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_TIFF"; fi
@@ -15,6 +16,7 @@ if [ -f "build_config.sh" ]; then
     if [ "$ENABLE_PDF" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_PDF"; fi
     if [ "$ENABLE_TRASH" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_TRASH"; fi
     if [ "$ENABLE_RENAME" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_RENAME"; fi
+    if [ "$ENABLE_HEIC_CONVERT" = "1" ]; then SWIFT_FLAGS="$SWIFT_FLAGS -D ENABLE_HEIC_CONVERT"; fi
 fi
 
 echo "=== Compiling View Swift code ==="
@@ -118,6 +120,7 @@ cat > View.app/Contents/Info.plist <<EOF
             <array>
                 <string>public.png</string>
                 <string>public.jpeg</string>
+                <string>public.heic</string>
                 <string>public.tiff</string>
                 <string>public.svg-image</string>
                 <string>com.adobe.encapsulated-postscript</string>

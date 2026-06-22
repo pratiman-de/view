@@ -13,6 +13,9 @@ func supportedExtensions() -> [String] {
 #if ENABLE_JPG
     exts.append(contentsOf: ["jpg", "jpeg"])
 #endif
+#if ENABLE_HEIC
+    exts.append("heic")
+#endif
 #if ENABLE_SVG
     exts.append("svg")
 #endif
@@ -80,6 +83,9 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
 #if ENABLE_JPG
         exts.insert("jpg")
         exts.insert("jpeg")
+#endif
+#if ENABLE_HEIC
+        exts.insert("heic")
 #endif
         return exts
     }()
@@ -343,9 +349,14 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         // Get image from cache or load it
         var image: NSImage? = preloadedImages[url]
         if image == nil {
-            if ext == "svg" || ext == "pdf" {
-                // NSImage handles SVG and PDF natively on macOS; bypass CGImageSource (raster only)
+            if ext == "svg" || ext == "pdf" || ext == "heic" || ext == "heif" {
+                // NSImage handles SVG, PDF, and HEIC natively, respecting EXIF orientation.
+                // CGImageSourceCreateImageAtIndex ignores EXIF orientation, causing HEIC images
+                // taken in portrait mode to appear sideways.
                 image = NSImage(contentsOf: url)
+                if let img = image {
+                    preloadedImages[url] = img
+                }
             } else if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
                let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
                 let img = NSImage(cgImage: cgImage, size: .zero)
@@ -461,7 +472,7 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
                         self.currentIndex = self.imageURLs.count - 1
                     }
                 }
-                self.displayCurrentImage(resetZoom: false)
+                self.displayCurrentImage(resetZoom: true)
             }
         } catch {
             showError("Could not move file to Trash: \(error.localizedDescription)")
@@ -532,6 +543,62 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
     }
 #endif
     
+#if ENABLE_HEIC_CONVERT
+    @objc func convertToPNG() {
+        guard currentIndex >= 0, currentIndex < imageURLs.count else { return }
+        let currentURL = imageURLs[currentIndex]
+        guard currentURL.pathExtension.lowercased() == "heic" else {
+            showError("Only HEIC files can be converted to PNG.")
+            return
+        }
+        guard let image = imageView.image else { return }
+        
+        var targetURL = currentURL.deletingPathExtension().appendingPathExtension("png")
+        
+        if FileManager.default.fileExists(atPath: targetURL.path) {
+            let overwriteAlert = NSAlert()
+            overwriteAlert.messageText = "File already exists"
+            overwriteAlert.informativeText = "A file named \"\(targetURL.lastPathComponent)\" already exists. Do you want to overwrite it or keep both?"
+            overwriteAlert.addButton(withTitle: "Keep Both")
+            overwriteAlert.addButton(withTitle: "Overwrite")
+            overwriteAlert.addButton(withTitle: "Cancel")
+            
+            let response = overwriteAlert.runModal()
+            if response == .alertFirstButtonReturn {
+                var copyIndex = 1
+                while FileManager.default.fileExists(atPath: targetURL.path) {
+                    let newName = "\(currentURL.deletingPathExtension().lastPathComponent) (\(copyIndex))"
+                    targetURL = currentURL.deletingLastPathComponent().appendingPathComponent("\(newName).png")
+                    copyIndex += 1
+                }
+            } else if response == .alertSecondButtonReturn {
+                do {
+                    try FileManager.default.trashItem(at: targetURL, resultingItemURL: nil)
+                } catch {
+                    self.showError("Failed to remove existing file: \(error.localizedDescription)")
+                    return
+                }
+            } else {
+                return
+            }
+        }
+        
+        guard let tiffData = image.tiffRepresentation,
+              let bitmapRep = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
+            showError("Failed to generate PNG data.")
+            return
+        }
+        
+        do {
+            try pngData.write(to: targetURL)
+            self.loadDirectory(focusingOn: targetURL, resetZoom: false, autoEnableFormat: true)
+        } catch {
+            showError("Failed to save PNG: \(error.localizedDescription)")
+        }
+    }
+#endif
+    
     // Smart Memory Management: Dynamic active-window cache (K=3)
     private func manageMemoryCache() {
         guard currentIndex >= 0, currentIndex < imageURLs.count else { return }
@@ -550,9 +617,8 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
             }
         }
         
-        // 2. Preload neighbors in background thread to avoid stutter on transition
-        // Skip glb (rendered via WebKit) and svg (loaded via NSImage, not CGImageSource)
-        let nonRasterExts = ["glb", "svg"]
+        // Skip glb (rendered via WebKit), svg/pdf/heic (loaded via NSImage, not CGImageSource)
+        let nonRasterExts = ["glb", "svg", "pdf", "heic", "heif"]
         let urlsToPreload = [prevURL, nextURL].compactMap { $0 }.filter { preloadedImages[$0] == nil && !nonRasterExts.contains($0.pathExtension.lowercased()) }
         
         DispatchQueue.global(qos: .userInitiated).async {
@@ -632,7 +698,11 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
                     self.view.window?.performClose(nil)
                     return true
                 case "c":
-                    if event.modifierFlags.contains(.option) {
+                    if event.modifierFlags.contains(.shift) {
+#if ENABLE_HEIC_CONVERT
+                        convertToPNG()
+#endif
+                    } else if event.modifierFlags.contains(.option) {
                         copyPathToClipboard()
                     } else {
                         copyImageToClipboard()
@@ -793,8 +863,17 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
     func promptForFile() {
         let openPanel = NSOpenPanel()
         openPanel.title = "Choose an Image"
-        let extensions = supportedExtensions()
-        openPanel.allowedContentTypes = extensions.compactMap { UTType(filenameExtension: $0) }
+        var contentTypes: [UTType] = supportedExtensions().compactMap { UTType(filenameExtension: $0) }
+#if ENABLE_HEIC
+        // Explicitly include public.heic since UTType(filenameExtension:) can silently fail for HEIC
+        if let heicType = UTType("public.heic"), !contentTypes.contains(heicType) {
+            contentTypes.append(heicType)
+        }
+        if let heifType = UTType("public.heif"), !contentTypes.contains(heifType) {
+            contentTypes.append(heifType)
+        }
+#endif
+        openPanel.allowedContentTypes = contentTypes
         openPanel.allowsMultipleSelection = false
         openPanel.canChooseDirectories = false
         openPanel.canChooseFiles = true
@@ -948,6 +1027,17 @@ class ImageViewController: NSViewController, WKNavigationDelegate, NSMenuItemVal
         } else {
             activeExtensions.insert("jpg")
             activeExtensions.insert("jpeg")
+        }
+        reloadDirectoryPreservingFocus()
+    }
+#endif
+    
+#if ENABLE_HEIC
+    @objc func toggleHEICSupport(_ sender: AnyObject) {
+        if activeExtensions.contains("heic") {
+            activeExtensions.remove("heic")
+        } else {
+            activeExtensions.insert("heic")
         }
         reloadDirectoryPreservingFocus()
     }
@@ -1140,6 +1230,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 isOn = vc.activeExtensions.contains("jpg")
             }
 #endif
+#if ENABLE_HEIC
+            if isOn == nil, item.action == #selector(ImageViewController.toggleHEICSupport(_:)) {
+                isOn = vc.activeExtensions.contains("heic")
+            }
+#endif
 #if ENABLE_TIFF
             if isOn == nil, item.action == #selector(ImageViewController.toggleTIFSupport(_:)) {
                 isOn = vc.activeExtensions.contains("tif")
@@ -1272,7 +1367,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         openPanel.title = "Choose Images"
         let extensions = supportedExtensions()
         if #available(macOS 11.0, *) {
-            openPanel.allowedContentTypes = extensions.compactMap { UTType(filenameExtension: $0) }
+            var contentTypes: [UTType] = extensions.compactMap { UTType(filenameExtension: $0) }
+#if ENABLE_HEIC
+            // Explicitly include public.heic since UTType(filenameExtension:) can silently fail for HEIC
+            if let heicType = UTType("public.heic"), !contentTypes.contains(heicType) {
+                contentTypes.append(heicType)
+            }
+            if let heifType = UTType("public.heif"), !contentTypes.contains(heifType) {
+                contentTypes.append(heifType)
+            }
+#endif
+            openPanel.allowedContentTypes = contentTypes
         } else {
             openPanel.allowedFileTypes = extensions
         }
@@ -1307,6 +1412,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit View", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         
+        // Edit Menu
+        let editMenu = NSMenu(title: "Edit")
+        let editMenuItem = NSMenuItem()
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+        
+#if ENABLE_HEIC_CONVERT
+        // Use standard Key Equivalent for shortcuts. Cmd+Shift+C -> keyEquivalent: "C"
+        editMenu.addItem(withTitle: "Convert HEIC to PNG", action: #selector(ImageViewController.convertToPNG), keyEquivalent: "C")
+#endif
+        
         // 2. Tools Menu
         let toolsMenu = NSMenu(title: "Tools")
         let toolsMenuItem = NSMenuItem()
@@ -1331,6 +1447,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 #endif
 #if ENABLE_JPG
         typesSubmenu.addItem(createSwitchMenuItem(title: "JPEG (.jpg, .jpeg)", tag: 98, isEnabled: true, action: #selector(ImageViewController.toggleJPGSupport(_:)), target: nil))
+#endif
+#if ENABLE_HEIC
+        typesSubmenu.addItem(createSwitchMenuItem(title: "HEIC (.heic)", tag: 105, isEnabled: true, action: #selector(ImageViewController.toggleHEICSupport(_:)), target: nil))
 #endif
         typesSubmenu.addItem(NSMenuItem.separator())
 #if ENABLE_SVG
